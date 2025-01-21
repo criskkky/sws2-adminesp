@@ -1,0 +1,24 @@
+name: "Feature Request"
+description: Suggest an idea for this project
+title: "[Feature Request]: Your title goes here"
+labels: enhancement
+assignees: criskkky
+body:
+  - type: textarea
+    attributes:
+      label: Describe your idea
+      description: Provide a detailed description of your feature request
+      placeholder: Explain what you want to achieve and why it would be beneficial
+    validations:
+      required: true
+  - type: checkboxes
+    attributes:
+      label: Acceptance criteria
+      description: Before submitting, make sure your request meets these criteria
+      options:
+        - label: I wrote it clearly and provided enough context.
+          required: true
+        - label: I have searched for existing issues and this is not a duplicate.
+          required: true
+        - label: I know that this is just a request and author(s) may choose to not implement it.
+          required: true

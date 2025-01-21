@@ -1,0 +1,14 @@
+{
+  "AdminESP": {
+    // Enable debug logging for troubleshooting ESP functionality (KEEP IT 'false' UNLESS DEBUGGING)
+    "DebugMode": false,
+    // Enable audit logging to server console when players toggle ESP (for server owner monitoring)
+    "EnableAuditLog": true,
+    // Permission required for full ESP access (see ESP all the time, regardless of state)
+    // Leave empty ("") to allow all players to have full access
+    "FullPermission": "adminesp.full",
+    // Permission required for limited ESP access (see ESP only when dead or spectating)
+    // Leave empty ("") to allow all players to have limited access
+    "LimitedPermission": "adminesp.limited"
+  }
+}

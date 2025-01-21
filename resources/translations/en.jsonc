@@ -1,0 +1,7 @@
+{
+  "adminesp.prefix": "[AdminESP]",
+  "adminesp.enabled": "Wallhack has been activated",
+  "adminesp.disabled": "Wallhack has been deactivated",
+  "adminesp.no_permission": "You don't have permission to use this command.",
+  "adminesp.unsupported_mode": "You cannot use ESP right now. It is only available when spectating or dead."
+}
