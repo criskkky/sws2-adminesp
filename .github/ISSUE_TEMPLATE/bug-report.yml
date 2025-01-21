@@ -1,0 +1,56 @@
+name: "Bug Report"
+description: Create a report for a found bug
+title: "[Bug]: Your title goes here"
+labels: bug
+assignees:
+  - criskkky
+body:
+  - type: textarea
+    id: bug-description
+    attributes:
+      label: Short description
+      description: A clear and concise description of the bug
+      placeholder: Describe the bug in a few words and what should happen instead, I recommend attaching screenshots or logs if applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: bug-steps
+    attributes:
+      label: How to reproduce
+      description: Steps to reproduce the issue
+      placeholder: |
+        1. Do this
+        2. Then do that
+        3. Finally, observe the output
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Server OS
+      options:
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: metamod-build
+    attributes:
+      label: Metamod Build Number
+      placeholder: e.g. v1285
+    validations:
+      required: true
+  - type: input
+    id: swiftly-build
+    attributes:
+      label: Swiftly Build Number
+      placeholder: e.g. v1.0.0
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin Version Number
+      placeholder: e.g. v1.0.0
+    validations:
+      required: true

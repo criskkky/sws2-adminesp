@@ -1,0 +1,177 @@
+# Made by https://github.com/criskkky for SwiftlyS2
+
+name: Release CS2 Plugin
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/Metadata.cs'
+  workflow_dispatch:
+
+env:
+  INSTALL_PATH: /game/csgo/addons/swiftlys2/plugins/
+
+jobs:
+  generate-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Get plugin info from source code
+        id: get_plugin_info
+        run: |
+          # Find the file containing PluginMetadata
+          PLUGIN_FILE=$(grep -rl "PluginMetadata" src/ | head -n 1)
+          
+          if [ -z "$PLUGIN_FILE" ]; then
+            echo "Error: No file found with PluginMetadata"
+            exit 1
+          fi
+          
+          echo "Plugin file found: $PLUGIN_FILE"
+          
+          # Extract Id and Version using regex
+          PLUGIN_ID=$(grep -oP '(?<=Id = ")[^"]+' "$PLUGIN_FILE")
+          PLUGIN_VERSION=$(grep -oP '(?<=Version = ")[^"]+' "$PLUGIN_FILE")
+          
+          echo "PLUGIN_NAME=$PLUGIN_ID" >> $GITHUB_OUTPUT
+          echo "NEW_VERSION=$PLUGIN_VERSION" >> $GITHUB_OUTPUT
+          echo "Plugin ID: $PLUGIN_ID"
+          echo "Plugin Version: $PLUGIN_VERSION"
+
+      - name: Check if version tag already exists
+        id: check_tag
+        run: |
+          git fetch --tags
+          if git rev-parse "v${{ steps.get_plugin_info.outputs.NEW_VERSION }}" >/dev/null 2>&1; then
+            echo "Tag v${{ steps.get_plugin_info.outputs.NEW_VERSION }} already exists. No release needed."
+            echo "TAG_EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag v${{ steps.get_plugin_info.outputs.NEW_VERSION }} does not exist. Proceeding with release."
+            echo "TAG_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish project
+        if: ${{ steps.check_tag.outputs.TAG_EXISTS == 'false' }}
+        run: dotnet publish -c Release
+
+      - name: Rename ZIP file
+        if: ${{ steps.check_tag.outputs.TAG_EXISTS == 'false' }}
+        run: |
+          # Extract AssemblyName from .csproj
+          CSPROJ_FILE=$(find . -maxdepth 1 -name "*.csproj" -type f | head -n 1)
+          
+          if [ -z "$CSPROJ_FILE" ]; then
+            echo "Error: No .csproj file found"
+            exit 1
+          fi
+          
+          ASSEMBLY_NAME=$(grep -oP '(?<=<AssemblyName>)[^<]+' "$CSPROJ_FILE")
+          
+          if [ -z "$ASSEMBLY_NAME" ]; then
+            echo "Error: AssemblyName not found in .csproj"
+            exit 1
+          fi
+          
+          echo "Assembly Name: $ASSEMBLY_NAME"
+          
+          # Look for the ZIP file with the AssemblyName
+          GENERATED_ZIP="build/${ASSEMBLY_NAME}.zip"
+          
+          if [ ! -f "$GENERATED_ZIP" ]; then
+            echo "Error: Expected ZIP file not found: $GENERATED_ZIP"
+            exit 1
+          fi
+          
+          echo "Found ZIP: $GENERATED_ZIP"
+          mv "$GENERATED_ZIP" ${{ steps.get_plugin_info.outputs.PLUGIN_NAME }}-${{ steps.get_plugin_info.outputs.NEW_VERSION }}.zip
+
+      - name: Get recent commit messages since last release
+        if: ${{ steps.check_tag.outputs.TAG_EXISTS == 'false' }}
+        id: get_commits
+        run: |
+          LATEST_TAG=$(git describe --tags $(git rev-list --tags --max-count=1) 2>/dev/null || echo "no_tag")
+
+          if [[ "$LATEST_TAG" == "no_tag" ]]; then
+            COMMIT_MESSAGES="- Initial Release"
+          else
+            COMMIT_MESSAGES=$(git log $LATEST_TAG..HEAD --oneline | sed 's/^/- /')
+          fi
+
+          echo "LAST_TAG=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "COMMIT_MESSAGES<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMIT_MESSAGES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Release
+        if: ${{ steps.check_tag.outputs.TAG_EXISTS == 'false' }}
+        id: release
+        uses: softprops/action-gh-release@v2.2.1
+        with:
+          tag_name: v${{ steps.get_plugin_info.outputs.NEW_VERSION }}
+          name: v${{ steps.get_plugin_info.outputs.NEW_VERSION }}
+          body: |
+            **Changes:**
+            ${{ steps.get_commits.outputs.COMMIT_MESSAGES }}
+
+            **How to download ⬇️**
+            Click the file below named <code>${{ steps.get_plugin_info.outputs.PLUGIN_NAME }}-${{ steps.get_plugin_info.outputs.NEW_VERSION }}.zip</code> in the assets section to start the download automatically.
+
+            **How to install 📦**
+            Extract the compressed file and place the folder(s) in `${{ env.INSTALL_PATH }}`
+
+            **Support me ❤️**
+            Please consider leaving a ⭐ if it's helpful to your server.
+          draft: false
+          prerelease: false
+          files: |
+            ./${{ steps.get_plugin_info.outputs.PLUGIN_NAME }}-${{ steps.get_plugin_info.outputs.NEW_VERSION }}.zip
+
+      - name: Release already exists
+        if: ${{ steps.check_tag.outputs.TAG_EXISTS == 'true' }}
+        run: |
+          echo "::notice::Release v${{ steps.get_plugin_info.outputs.NEW_VERSION }} already exists. Update the version in the PluginMetadata attribute to create a new release."
+
+      - name: Summary · Release created
+        if: ${{ steps.check_tag.outputs.TAG_EXISTS == 'false' }}
+        run: |
+          CHANGELOG=$(printf "%s\n" "${{ steps.get_commits.outputs.COMMIT_MESSAGES }}")
+          {
+            echo "## ✅ Release created";
+            echo;
+            echo "- Plugin: ${{ steps.get_plugin_info.outputs.PLUGIN_NAME }}";
+            echo "- Version: v${{ steps.get_plugin_info.outputs.NEW_VERSION }}";
+            echo "- Asset: ${{ steps.get_plugin_info.outputs.PLUGIN_NAME }}-${{ steps.get_plugin_info.outputs.NEW_VERSION }}.zip";
+            echo "- Release: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.get_plugin_info.outputs.NEW_VERSION }}";
+            if [ "${{ steps.get_commits.outputs.LAST_TAG }}" != "no_tag" ]; then
+              echo "- Compare: https://github.com/${{ github.repository }}/compare/${{ steps.get_commits.outputs.LAST_TAG }}...v${{ steps.get_plugin_info.outputs.NEW_VERSION }}";
+            fi
+            echo;
+            echo "### Changes";
+            echo "$CHANGELOG";
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summary · Release skipped (tag exists)
+        if: ${{ steps.check_tag.outputs.TAG_EXISTS == 'true' }}
+        run: |
+          {
+            echo "## ℹ️ Release skipped";
+            echo;
+            echo "A tag for version v${{ steps.get_plugin_info.outputs.NEW_VERSION }} already exists.";
+            echo "Update the Version in PluginMetadata to trigger a new release.";
+            echo "- Existing release: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.get_plugin_info.outputs.NEW_VERSION }}";
+          } >> "$GITHUB_STEP_SUMMARY"
+           

@@ -1,0 +1,25 @@
+name: "Question"
+description: Make a question related to the project
+title: "[Question]: "
+labels: question
+body:
+  - type: textarea
+    attributes:
+      label: Question
+      description: Please provide your question in detail here
+      placeholder: What do you want to know?
+    validations:
+      required: true
+  - type: checkboxes
+    attributes:
+      label: Acceptance criteria
+      description: Before submitting, make sure your question meets these criteria
+      options:
+        - label: My question is related to this project.
+          required: true
+        - label: I'm not publishing any sensitive information.
+          required: true
+        - label: I have searched for existing issues and this is not a duplicate.
+          required: true
+        - label: I have read the documentation and my question is not answered there.
+          required: true

@@ -1,0 +1,4 @@
+# No track these folders/files
+/build
+/obj
+llms-full.txt
