@@ -4,6 +4,7 @@ using SwiftlyS2.Shared.Events;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace AdminESP;
 
@@ -37,7 +38,7 @@ public partial class AdminESP : BasePlugin {
     // Hot Reload
     options.OnChange(newConfig => {
         Config = newConfig;
-        Console.WriteLine($"{Helper.ChatColors.Magenta}[AdminESP] Configuration updated.{Helper.ChatColors.Default}");
+        Core.Logger.LogInformation($"[AdminESP] Configuration updated.");
         Log("DebugMode: " + Config.DebugMode);
         RefreshGlowsOnConfigChange();
     });
@@ -81,7 +82,6 @@ public partial class AdminESP : BasePlugin {
     {
        DestroyGlow(playerId, "PluginUnload");
     }
-    glowApplied.Clear();
   }
 
   private void OnMapUnload(IOnMapUnloadEvent @event)
@@ -91,7 +91,6 @@ public partial class AdminESP : BasePlugin {
     {
       DestroyGlow(playerId, "OnMapUnload");
     }
-    glowApplied.Clear();
     espEnabled.Clear();
     Log($"Map {@event.MapName} unloaded, all glows and states cleared", LogLevel.Info);
   }

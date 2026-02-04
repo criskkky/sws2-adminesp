@@ -1,6 +1,7 @@
 using SwiftlyS2.Shared.Plugins;
 using SwiftlyS2.Shared.Commands;
 using SwiftlyS2.Shared;
+using Microsoft.Extensions.Logging;
 
 namespace AdminESP;
 
@@ -42,7 +43,7 @@ public partial class AdminESP : BasePlugin {
     // Audit log to console for server owner (if enabled in config)
     if (Config.EnableAuditLog)
     {
-        Console.WriteLine($"[AdminESP] {DateTime.Now:yyyy-MM-dd HH:mm:ss} SteamID: {sender.SteamID} - Player {sender.Controller?.PlayerName ?? "Unknown"} toggled ESP to {(isEnabled ? "ON" : "OFF")}");
+        Core.Logger.LogInformation($"[AdminESP] SteamID: {sender.SteamID} - Player {sender.Controller?.PlayerName ?? "Unknown"} toggled ESP to {(isEnabled ? "ON" : "OFF")}");
     }
     sender.SendChat($"{Helper.ChatColors.Red}{Core.Localizer["adminesp.prefix"]} {Helper.ChatColors.Default}{Core.Localizer[isEnabled ? "adminesp.enabled" : "adminesp.disabled"]}");
   }

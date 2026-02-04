@@ -48,58 +48,52 @@ public partial class AdminESP : BasePlugin {
           return HookResult.Continue;
         }
 
-        // 1. TARGET Logic: Create/update glow for this player
-        // Check if model changed and clean up old glow
-        if (glowApplied.TryGetValue(player.PlayerID, out var existingGlow))
+        // Use NextTick to ensure player model is fully loaded before checking/creating glow
+        var capturedPlayer = player; // Capture for closure
+        Core.Scheduler.NextTick(() =>
         {
-          var (applied, glow, relay, oldModel) = existingGlow;
-          string currentModel = GetPlayerModelName(player);
-          if (oldModel != currentModel)
+          try
           {
-            Log($"[SPAWN] Model changed for PlayerId={player.PlayerID} (SteamId={player.SteamID}): {oldModel} -> {currentModel}", LogLevel.Info);
-            DestroyGlow(player.PlayerID, "EventPlayerSpawn:ModelChange");
-          }
-          else
-          {
-            Log($"[SPAWN] PlayerId={player.PlayerID} already has glow with matching model: {currentModel}", LogLevel.Debug);
-          }
-        }
-
-        // Apply glow if there is at least one viewer with ESP enabled (excluding the player themselves)
-        // This ensures glows are recreated after round end when players respawn
-        var allPlayers = Core.PlayerManager.GetAllPlayers();
-        bool hasViewers = allPlayers.Any(v => v != player && espEnabled.TryGetValue(v.PlayerID, out bool isEnabled) && isEnabled);
-        
-        if (hasViewers)
-        {
-          Log($"[SPAWN] Creating glow for PlayerId={player.PlayerID} (SteamId={player.SteamID}): {allPlayers.Count(v => v != player && espEnabled.TryGetValue(v.PlayerID, out bool e) && e)} viewers with ESP", LogLevel.Info);
-          
-          // Use NextTick to ensure player model is fully loaded before applying glow
-          var capturedPlayer = player; // Capture for closure
-          Core.Scheduler.NextTick(() =>
-          {
-            try
+            // Re-validate player and pawn are still valid
+            if (!HasValidPawn(capturedPlayer))
             {
-              // Re-validate player and pawn are still valid
-              if (capturedPlayer != null && capturedPlayer.PlayerPawn != null && capturedPlayer.PlayerPawn.IsValid)
+              Log($"[SPAWN] Player or pawn became invalid before NextTick for PlayerId={capturedPlayer?.PlayerID} (SteamId={capturedPlayer?.SteamID})", LogLevel.Warning);
+              return;
+            }
+
+            // 1. TARGET Logic: Create/update glow for this player
+            // Check if model changed and clean up old glow
+            if (glowApplied.TryGetValue(capturedPlayer.PlayerID, out var existingGlow))
+            {
+              string currentModel = GetPlayerModelName(capturedPlayer);
+              if (existingGlow.ModelName != currentModel)
               {
-                SetGlow(capturedPlayer);
+                Log($"[SPAWN] Model changed for PlayerId={capturedPlayer.PlayerID} (SteamId={capturedPlayer.SteamID}): {existingGlow.ModelName} -> {currentModel}", LogLevel.Info);
+                DestroyGlow(capturedPlayer.PlayerID, "EventPlayerSpawn:ModelChange");
               }
               else
               {
-                Log($"[SPAWN] Player or pawn became invalid before NextTick for PlayerId={capturedPlayer?.PlayerID} (SteamId={capturedPlayer?.SteamID})", LogLevel.Warning);
+                Log($"[SPAWN] PlayerId={capturedPlayer.PlayerID} already has glow with matching model: {currentModel}", LogLevel.Debug);
+                return; // Model hasn't changed, no need to recreate
               }
             }
-            catch (Exception ex)
+
+            // Apply glow if there is at least one viewer with ESP enabled (excluding the player themselves)
+            if (HasActiveViewers(capturedPlayer.PlayerID))
             {
-              Log($"Error in NextTick SetGlow: {ex.Message}", LogLevel.Error);
+              Log($"[SPAWN] Creating glow for PlayerId={capturedPlayer.PlayerID} (SteamId={capturedPlayer.SteamID})", LogLevel.Info);
+              SetGlow(capturedPlayer);
             }
-          });
-        }
-        else
-        {
-          Log($"[SPAWN] No viewers with ESP enabled, skipping glow for PlayerId={player.PlayerID} (SteamId={player.SteamID})", LogLevel.Debug);
-        }
+            else
+            {
+              Log($"[SPAWN] No viewers with ESP enabled, skipping glow for PlayerId={capturedPlayer.PlayerID} (SteamId={capturedPlayer.SteamID})", LogLevel.Debug);
+            }
+          }
+          catch (Exception ex)
+          {
+            Log($"Error in NextTick spawn logic: {ex.Message}", LogLevel.Error);
+          }
+        });
 
         // 2. VIEWER Logic: Update visibility if this player has ESP enabled
         // If they respawned and mode is DeadOnly, they should lose vision of glows
@@ -223,34 +217,30 @@ public partial class AdminESP : BasePlugin {
           DestroyGlow(player.PlayerID, "EventPlayerTeam");
           
           // If player is alive and viewers exist, recreate glow with new color
-          if (player.PlayerPawn != null && player.PlayerPawn.IsValid)
+          if (HasValidPawn(player) && HasActiveViewers(player.PlayerID))
           {
-            var allPlayers = Core.PlayerManager.GetAllPlayers();
-            if (allPlayers.Any(v => v != player && espEnabled.TryGetValue(v.PlayerID, out bool isEnabled) && isEnabled))
+            // Use NextTick to ensure player model is updated with new team before applying glow
+            var capturedPlayer = player; // Capture for closure
+            Core.Scheduler.NextTick(() =>
             {
-              // Use NextTick to ensure player model is updated with new team before applying glow
-              var capturedPlayer = player; // Capture for closure
-              Core.Scheduler.NextTick(() =>
+              try
               {
-                try
+                // Re-validate player and pawn are still valid
+                if (HasValidPawn(capturedPlayer))
                 {
-                  // Re-validate player and pawn are still valid
-                  if (capturedPlayer != null && capturedPlayer.PlayerPawn != null && capturedPlayer.PlayerPawn.IsValid)
-                  {
-                    SetGlow(capturedPlayer);
-                    Log($"Recreated glow for {capturedPlayer.SteamID} with new team color", LogLevel.Info);
-                  }
-                  else
-                  {
-                    Log($"[TEAM_CHANGE] Player or pawn became invalid before NextTick for PlayerId={capturedPlayer?.PlayerID} (SteamId={capturedPlayer?.SteamID})", LogLevel.Warning);
-                  }
+                  SetGlow(capturedPlayer);
+                  Log($"Recreated glow for {capturedPlayer.SteamID} with new team color", LogLevel.Info);
                 }
-                catch (Exception ex)
+                else
                 {
-                  Log($"Error in NextTick SetGlow (team change): {ex.Message}", LogLevel.Error);
+                  Log($"[TEAM_CHANGE] Player or pawn became invalid before NextTick for PlayerId={capturedPlayer?.PlayerID} (SteamId={capturedPlayer?.SteamID})", LogLevel.Warning);
                 }
-              });
-            }
+              }
+              catch (Exception ex)
+              {
+                Log($"Error in NextTick SetGlow (team change): {ex.Message}", LogLevel.Error);
+              }
+            });
           }
         }
 
@@ -295,36 +285,30 @@ public partial class AdminESP : BasePlugin {
           // No need for EnsureGlowHiddenFromOwner - targets are automatically excluded in SetGlow
 
           // Recreate glow for the player (now controlling the bot) if there are viewers with ESP enabled
-          if (player.PlayerPawn != null && player.PlayerPawn.IsValid)
+          if (HasValidPawn(player) && HasActiveViewers(player.PlayerID))
           {
-            var allPlayers = Core.PlayerManager.GetAllPlayers();
-            bool hasViewers = allPlayers.Any(v => v != player && espEnabled.TryGetValue(v.PlayerID, out bool e) && e);
+            Log($"Recreating glow for player {player.SteamID} after bot takeover", LogLevel.Info);
             
-            if (hasViewers)
+            // Use NextTick to ensure everything is settled
+            var capturedPlayer = player;
+            Core.Scheduler.NextTick(() =>
             {
-              Log($"Recreating glow for player {player.SteamID} after bot takeover (viewers with ESP: {allPlayers.Count(v => v != player && espEnabled.TryGetValue(v.PlayerID, out bool e) && e)})", LogLevel.Info);
-              
-              // Use NextTick to ensure everything is settled
-              var capturedPlayer = player;
-              Core.Scheduler.NextTick(() =>
+              try
               {
-                try
+                if (HasValidPawn(capturedPlayer))
                 {
-                  if (capturedPlayer != null && capturedPlayer.PlayerPawn != null && capturedPlayer.PlayerPawn.IsValid)
-                  {
-                    SetGlow(capturedPlayer);
-                  }
-                  else
-                  {
-                    Log($"[BOT_TAKEOVER] Player or pawn became invalid after NextTick for PlayerId={capturedPlayer?.PlayerID} (SteamId={capturedPlayer?.SteamID})", LogLevel.Warning);
-                  }
+                  SetGlow(capturedPlayer);
                 }
-                catch (Exception ex)
+                else
                 {
-                  Log($"Error in NextTick SetGlow after takeover: {ex.Message}", LogLevel.Error);
+                  Log($"[BOT_TAKEOVER] Player or pawn became invalid after NextTick for PlayerId={capturedPlayer?.PlayerID} (SteamId={capturedPlayer?.SteamID})", LogLevel.Warning);
                 }
-              });
-            }
+              }
+              catch (Exception ex)
+              {
+                Log($"Error in NextTick SetGlow after takeover: {ex.Message}", LogLevel.Error);
+              }
+            });
           }
         }
       }

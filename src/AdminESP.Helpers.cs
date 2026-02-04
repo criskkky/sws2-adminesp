@@ -3,56 +3,61 @@ using SwiftlyS2.Shared.Plugins;
 using SwiftlyS2.Shared.SchemaDefinitions;
 using SwiftlyS2.Shared.Natives;
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 
 namespace AdminESP;
 
-public partial class AdminESP : BasePlugin {
-  
+public partial class AdminESP : BasePlugin
+{
+
   // ============================================================================
   // Enums
   // ============================================================================
-  
+
   // Logging levels
   private enum LogLevel { Debug, Info, Warning, Error }
-  
+
   // ============================================================================
   // Fields
   // ============================================================================
-  
+
   // Thread-safe dictionaries for concurrent access from multiple events
   // glowApplied: Tracks active glow entities per player (PlayerID -> glow state)
-  // - 'applied': whether glow is currently active
-  // - 'glow':the visible glow entity
-  // - 'relay': invisible entity that follows the player (glow follows relay)
-  // - 'modelName': cached model name to detect model changes
-  private ConcurrentDictionary<int, (bool applied, CDynamicProp? glow, CDynamicProp? relay, string modelName)> glowApplied = new();
-  
+  // Using CHandle for safe entity references that auto-validate on access
+  private record GlowData(
+    CHandle<CDynamicProp> GlowHandle,
+    CHandle<CDynamicProp> RelayHandle,
+    string ModelName
+  );
+
+  private ConcurrentDictionary<int, GlowData> glowApplied = new();
+
   // espEnabled: Tracks which players have ESP enabled (PlayerID -> enabled state)
   private ConcurrentDictionary<int, bool> espEnabled = new();
-  
+
   // ============================================================================
   // Public Methods
   // ============================================================================
-  
+
   // Applies glow effect to a target player with team-based color
   // Team 2 (T) = Red (255,0,0), Team 3 (CT) = Blue (0,0,255)
   public void SetGlow(IPlayer target)
   {
-    if (target.Pawn == null) return;
+    if (target.PlayerPawn == null || !target.PlayerPawn.IsValid) return;
     if (glowApplied.ContainsKey(target.PlayerID)) return; // Already applied (ContainsKey is safe for existence check)
-    
+
     // Set color based on team: T=Red, CT=Blue
     int r = target.Controller.TeamNum == 2 ? 255 : 0;
     int g = 0;
     int b = target.Controller.TeamNum == 2 ? 0 : 255;
     int a = 255;
-    SetGlow(target.Pawn, r, g, b, a, target.PlayerID);
+    SetGlow(target.PlayerPawn, r, g, b, a, target.PlayerID);
   }
-  
+
   // ============================================================================
   // Private Methods
   // ============================================================================
-  
+
   // Centralized permission checking to avoid code duplication
   // Returns tuple: (hasFull, hasLimited)
   // - hasFull: Can see ESP all the time (no restrictions)
@@ -60,9 +65,9 @@ public partial class AdminESP : BasePlugin {
   // Note: Empty permission strings in config mean "allow all"
   private (bool hasFull, bool hasLimited) CheckPermissions(ulong steamId)
   {
-    bool hasFull = string.IsNullOrEmpty(Config.FullPermission) || 
+    bool hasFull = string.IsNullOrEmpty(Config.FullPermission) ||
                    Core.Permission.PlayerHasPermission(steamId, Config.FullPermission);
-    bool hasLimited = string.IsNullOrEmpty(Config.LimitedPermission) || 
+    bool hasLimited = string.IsNullOrEmpty(Config.LimitedPermission) ||
                       Core.Permission.PlayerHasPermission(steamId, Config.LimitedPermission);
     return (hasFull, hasLimited);
   }
@@ -79,11 +84,56 @@ public partial class AdminESP : BasePlugin {
     return false;
   }
 
+  // Validates if a player has a valid PlayerPawn
+  private bool HasValidPawn(IPlayer? player)
+  {
+    return player?.PlayerPawn != null && player.PlayerPawn.IsValid;
+  }
+
+  // Checks if there are any viewers with ESP enabled, excluding a specific player
+  private bool HasActiveViewers(int excludePlayerId)
+  {
+    foreach (var kvp in espEnabled)
+    {
+      if (kvp.Key != excludePlayerId && kvp.Value)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // Improved logging with levels
   private void Log(string message, LogLevel level = LogLevel.Debug)
   {
     if (!Config.DebugMode) return; // Hide all logs when DebugMode is false
-    Console.WriteLine($"[AdminESP:{level}] {message}");
+    
+    switch (level)
+    {
+      case LogLevel.Error:
+        Core.Logger.LogError($"[AdminESP] {message}");
+        break;
+      case LogLevel.Warning:
+        Core.Logger.LogWarning($"[AdminESP] {message}");
+        break;
+      case LogLevel.Info:
+        Core.Logger.LogInformation($"[AdminESP] {message}");
+        break;
+      case LogLevel.Debug:
+      default:
+        Core.Logger.LogDebug($"[AdminESP] {message}");
+        break;
+    }
+  }
+
+  // Multi-layer validation for safe entity access (prevents animation system crashes)
+  private bool IsSafeToAccessEntity(CBaseEntity? entity)
+  {
+    if (entity == null || !entity.IsValid) return false;
+    if (entity.CBodyComponent?.SceneNode == null) return false;
+    var skeleton = entity.CBodyComponent.SceneNode.GetSkeletonInstance();
+    if (skeleton?.ModelState == null) return false;
+    return true;
   }
 
   // Gets the player's current character model path
@@ -114,47 +164,31 @@ public partial class AdminESP : BasePlugin {
     try
     {
       Log($"[GLOW_CREATE] Starting SetGlow for PlayerId={playerId}, Color=({ColorR},{ColorG},{ColorB})", LogLevel.Info);
-      
-      if (entity == null || !entity.IsValid || entity.CBodyComponent?.SceneNode?.GetSkeletonInstance()?.ModelState == null)
+
+      if (!IsSafeToAccessEntity(entity))
       {
-        Log($"[GLOW_CREATE] FAILED for PlayerId={playerId}: Entity validation failed (entity={entity != null}, valid={entity?.IsValid}, component={entity?.CBodyComponent != null})", LogLevel.Warning);
+        Log($"[GLOW_CREATE] FAILED for PlayerId={playerId}: Entity validation failed", LogLevel.Warning);
         return;
       }
 
-      CDynamicProp modelGlow = Core.EntitySystem.CreateEntityByDesignerName<CDynamicProp>("prop_dynamic");
-      CDynamicProp modelRelay = Core.EntitySystem.CreateEntityByDesignerName<CDynamicProp>("prop_dynamic");
-
-      if (modelGlow == null || modelRelay == null)
-      {
-        Log($"[GLOW_CREATE] FAILED for PlayerId={playerId}: Entity creation failed (glow={modelGlow != null}, relay={modelRelay != null})", LogLevel.Error);
-        return;
-      }
-
-      string modelName = entity.CBodyComponent.SceneNode.GetSkeletonInstance().ModelState.ModelName;
+      string modelName = entity.CBodyComponent!.SceneNode!.GetSkeletonInstance()!.ModelState!.ModelName;
       if (string.IsNullOrEmpty(modelName))
       {
         Log($"[GLOW_CREATE] FAILED for PlayerId={playerId}: Model name is null or empty", LogLevel.Warning);
         return;
       }
-      
+
       Log($"[GLOW_CREATE] PlayerId={playerId} using model: {modelName}", LogLevel.Info);
 
-      // Clear EF_NODRAW flag (bit 2) to make entity visible for rendering
-      modelRelay.CBodyComponent!.SceneNode!.Owner!.Entity!.Flags &= unchecked((uint)~(1 << 2));
+      // Create entities using helper method
+      var modelRelay = SafeSpawnGlowEntity(modelName, isGlow: false);
+      var modelGlow = SafeSpawnGlowEntity(modelName, isGlow: true);
 
-      // Configure relay entity (invisible proxy that follows the player)
-      modelRelay.SetModel(modelName);
-      modelRelay.Spawnflags = 256u; // Bone Merge: Sync animation with player
-      modelRelay.RenderMode = RenderMode_t.kRenderNone; // Make relay invisible
-      modelRelay.DispatchSpawn();
-
-      // Clear EF_NODRAW flag for glow entity
-      modelGlow.CBodyComponent!.SceneNode!.Owner!.Entity!.Flags &= unchecked((uint)~(1 << 2));
-
-      // Configure glow entity (visible glow effect)
-      modelGlow.SetModel(modelName);
-      modelGlow.Spawnflags = 256u; // Bone Merge: Sync animation with player
-      modelGlow.DispatchSpawn();
+      if (modelRelay == null || modelGlow == null)
+      {
+        Log($"[GLOW_CREATE] FAILED for PlayerId={playerId}: SafeSpawnGlowEntity returned null", LogLevel.Error);
+        return;
+      }
 
       // Configure glow appearance
       modelGlow.Render = new Color(0, 0, 0, 1); // Alpha 1 (almost transparent) to match snippet
@@ -169,12 +203,14 @@ public partial class AdminESP : BasePlugin {
       modelRelay.AcceptInput("FollowEntity", "!activator", entity, modelRelay);
       modelGlow.AcceptInput("FollowEntity", "!activator", modelRelay, modelGlow);
 
-      // Save the entities in the dictionary
-      glowApplied[playerId] = (true, modelGlow, modelRelay, modelName);
-      
+      // Save entity handles (safer than direct references)
+      var glowHandle = Core.EntitySystem.GetRefEHandle(modelGlow);
+      var relayHandle = Core.EntitySystem.GetRefEHandle(modelRelay);
+      glowApplied[playerId] = new GlowData(glowHandle, relayHandle, modelName);
+
       // Configure transmit states for all viewers with ESP enabled
       UpdateTransmitsForNewGlow(playerId, modelGlow, modelRelay);
-      
+
       Log($"[GLOW_CREATE] SUCCESS for PlayerId={playerId}: Glow entity created and configured", LogLevel.Info);
     }
     catch (Exception ex)
@@ -183,20 +219,55 @@ public partial class AdminESP : BasePlugin {
     }
   }
 
+  // Thread-safe spawn and despawn helpers for glow entities
+  private CDynamicProp? SafeSpawnGlowEntity(string modelName, bool isGlow = false)
+  {
+    var entity = Core.EntitySystem.CreateEntityByDesignerName<CDynamicProp>("prop_dynamic");
+    if (entity == null) return null;
+
+    // Clear EF_NODRAW flag (bit 2) to make entity visible for rendering
+    entity.CBodyComponent!.SceneNode!.Owner!.Entity!.Flags &= unchecked((uint)~(1 << 2));
+
+    // Configure entity
+    entity.SetModel(modelName);
+    entity.Spawnflags = 256u; // Bone Merge: Sync animation with player
+
+    if (!isGlow)
+    {
+      entity.RenderMode = RenderMode_t.kRenderNone; // Make relay invisible
+    }
+
+    entity.DispatchSpawn();
+    return entity;
+  }
+
+  // Thread-safe despawn helper for glow entities
+  private void SafeDespawnGlow(CDynamicProp? entity)
+  {
+    if (entity != null && entity.IsValid)
+    {
+      Core.Scheduler.NextWorldUpdate(() => entity.Despawn());
+    }
+  }
+
   // Method to destroy glow of a player
   private void DestroyGlow(int playerId, string caller = "Unknown")
   {
     if (glowApplied.TryRemove(playerId, out var glowData))
     {
-      var (applied, glow, relay, modelName) = glowData;
-      
-      bool glowValid = glow != null && glow.IsValid;
-      bool relayValid = relay != null && relay.IsValid;
-      
+      bool glowValid = glowData.GlowHandle.IsValid;
+      bool relayValid = glowData.RelayHandle.IsValid;
+
       Log($"[GLOW_DESTROY] PlayerId={playerId}, Caller={caller}, GlowValid={glowValid}, RelayValid={relayValid}", LogLevel.Info);
-      
-      if (glow != null && glow.IsValid) glow.Despawn();
-      if (relay != null && relay.IsValid) relay.Despawn();
+
+      if (glowData.GlowHandle.IsValid)
+      {
+        SafeDespawnGlow(glowData.GlowHandle.Value);
+      }
+      if (glowData.RelayHandle.IsValid)
+      {
+        SafeDespawnGlow(glowData.RelayHandle.Value);
+      }
     }
     else
     {
@@ -235,9 +306,9 @@ public partial class AdminESP : BasePlugin {
         if (target.PlayerID == viewerId) continue;
 
         // Check if target has valid pawn
-        if (transmit && target.Pawn == null)
+        if (transmit && !HasValidPawn(target))
         {
-          Log($"Skipping target {target.PlayerID}: No pawn", LogLevel.Warning);
+          Log($"Skipping target {target.PlayerID}: No valid pawn", LogLevel.Warning);
           skipped++;
           continue;
         }
@@ -245,15 +316,34 @@ public partial class AdminESP : BasePlugin {
         if (glowApplied.TryGetValue(target.PlayerID, out var glowData))
         {
           // Glow exists, enable transmit
-          var (applied, glow, relay, modelName) = glowData;
-          if (glow != null && glow.IsValid) glow.SetTransmitState(transmit, viewerId);
-          if (relay != null && relay.IsValid) relay.SetTransmitState(transmit, viewerId);
+          if (glowData.GlowHandle.IsValid)
+          {
+            glowData.GlowHandle.Value!.SetTransmitState(transmit, viewerId);
+          }
+          if (glowData.RelayHandle.IsValid)
+          {
+            glowData.RelayHandle.Value!.SetTransmitState(transmit, viewerId);
+          }
           updated++;
         }
-        else if (transmit && target.Pawn != null)
+        else if (transmit && HasValidPawn(target))
         {
-          // Create new glow
-          SetGlow(target);
+          // Create new glow using NextTick for consistency with spawn events
+          var capturedTarget = target;
+          Core.Scheduler.NextTick(() =>
+          {
+            try
+            {
+              if (HasValidPawn(capturedTarget))
+              {
+                SetGlow(capturedTarget);
+              }
+            }
+            catch (Exception ex)
+            {
+              Log($"Error in NextTick SetGlow (ToggleESP): {ex.Message}", LogLevel.Error);
+            }
+          });
           created++;
         }
       }
@@ -273,7 +363,7 @@ public partial class AdminESP : BasePlugin {
     {
       if (espEnabled.TryGetValue(viewer.PlayerID, out bool isEnabled) && isEnabled)
       {
-         UpdateViewerTransmits(viewer.SteamID);
+        UpdateViewerTransmits(viewer.SteamID);
       }
     }
   }
@@ -296,9 +386,15 @@ public partial class AdminESP : BasePlugin {
       // If ESP is disabled for this viewer, ensure no transmits
       foreach (var kvp in glowApplied)
       {
-        var (applied, glow, relay, modelName) = kvp.Value;
-        if (glow != null && glow.IsValid) glow.SetTransmitState(false, viewerId);
-        if (relay != null && relay.IsValid) relay.SetTransmitState(false, viewerId);
+        var glowData = kvp.Value;
+        if (glowData.GlowHandle.IsValid)
+        {
+          glowData.GlowHandle.Value!.SetTransmitState(false, viewerId);
+        }
+        if (glowData.RelayHandle.IsValid)
+        {
+          glowData.RelayHandle.Value!.SetTransmitState(false, viewerId);
+        }
       }
       return;
     }
@@ -310,52 +406,52 @@ public partial class AdminESP : BasePlugin {
     int count = 0;
     foreach (var kvp in glowApplied)
     {
-      if (kvp.Key != viewerId) // Exclude self
+      var glowData = kvp.Value;
+      bool isViewerSelf = kvp.Key == viewerId;
+      bool shouldTransmit = !isViewerSelf && transmit;
+
+      if (glowData.GlowHandle.IsValid)
       {
-        var (applied, glow, relay, modelName) = kvp.Value;
-        if (glow != null && glow.IsValid) glow.SetTransmitState(transmit, viewerId);
-        if (relay != null && relay.IsValid) relay.SetTransmitState(transmit, viewerId);
-        count++;
+        glowData.GlowHandle.Value!.SetTransmitState(shouldTransmit, viewerId);
       }
-      else
+      if (glowData.RelayHandle.IsValid)
       {
-        // Explicitly ensure viewer never sees their own glow
-        var (applied, glow, relay, modelName) = kvp.Value;
-        if (glow != null && glow.IsValid) glow.SetTransmitState(false, viewerId);
-        if (relay != null && relay.IsValid) relay.SetTransmitState(false, viewerId);
+        glowData.RelayHandle.Value!.SetTransmitState(shouldTransmit, viewerId);
       }
+
+      if (!isViewerSelf) count++;
     }
     Log($"Updated transmits for {steamId} (transmit={transmit}), adjusted {count} glows", LogLevel.Debug);
   }
 
   // Helper method to configure transmit states for a newly created glow
   // Called after glow entities are created and added to the dictionary
-  private void UpdateTransmitsForNewGlow(int targetPlayerId, CDynamicProp? glow, CDynamicProp? relay)
+  private void UpdateTransmitsForNewGlow(int targetPlayerId, CDynamicProp glow, CDynamicProp relay)
   {
     foreach (var viewer in Core.PlayerManager.GetAllPlayers())
     {
       // Explicitly hide glow from the target player (themselves)
       if (viewer.PlayerID == targetPlayerId)
       {
-        if (glow != null && glow.IsValid) glow.SetTransmitState(false, viewer.PlayerID);
-        if (relay != null && relay.IsValid) relay.SetTransmitState(false, viewer.PlayerID);
+        glow.SetTransmitState(false, viewer.PlayerID);
+        relay.SetTransmitState(false, viewer.PlayerID);
         Log($"[GLOW_CREATE] Explicitly hiding glow from target PlayerId={targetPlayerId} (themselves)", LogLevel.Debug);
         continue;
       }
-      
+
       // Skip viewers without ESP enabled
       if (!espEnabled.TryGetValue(viewer.PlayerID, out bool isEnabled) || !isEnabled)
       {
-        if (glow != null && glow.IsValid) glow.SetTransmitState(false, viewer.PlayerID);
-        if (relay != null && relay.IsValid) relay.SetTransmitState(false, viewer.PlayerID);
+        glow.SetTransmitState(false, viewer.PlayerID);
+        relay.SetTransmitState(false, viewer.PlayerID);
         continue;
       }
 
       // Use centralized permission check
       bool transmit = CanViewerSeeGlow(viewer);
       Log($"Setting transmit {transmit} for player {viewer.PlayerID} (SteamID {viewer.SteamID}) on glow of {targetPlayerId}", LogLevel.Debug);
-      if (glow != null && glow.IsValid) glow.SetTransmitState(transmit, viewer.PlayerID);
-      if (relay != null && relay.IsValid) relay.SetTransmitState(transmit, viewer.PlayerID);
+      glow.SetTransmitState(transmit, viewer.PlayerID);
+      relay.SetTransmitState(transmit, viewer.PlayerID);
     }
   }
 }
