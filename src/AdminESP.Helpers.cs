@@ -242,12 +242,14 @@ public partial class AdminESP : BasePlugin
   }
 
   // Thread-safe despawn helper for glow entities
-  private void SafeDespawnGlow(CDynamicProp? entity)
+  // Revalidates entity handle inside callback to prevent crashes from mapchange/entity deletion
+  private void SafeDespawnGlow(CHandle<CDynamicProp> handle)
   {
-    if (entity != null && entity.IsValid)
+    Core.Scheduler.NextWorldUpdate(() =>
     {
-      Core.Scheduler.NextWorldUpdate(() => entity.Despawn());
-    }
+      if (!handle.IsValid) return;
+      handle.Value?.Despawn();
+    });
   }
 
   // Method to destroy glow of a player
@@ -260,14 +262,9 @@ public partial class AdminESP : BasePlugin
 
       Log($"[GLOW_DESTROY] PlayerId={playerId}, Caller={caller}, GlowValid={glowValid}, RelayValid={relayValid}", LogLevel.Info);
 
-      if (glowData.GlowHandle.IsValid)
-      {
-        SafeDespawnGlow(glowData.GlowHandle.Value);
-      }
-      if (glowData.RelayHandle.IsValid)
-      {
-        SafeDespawnGlow(glowData.RelayHandle.Value);
-      }
+      // Pass handles directly to SafeDespawnGlow for proper revalidation inside callback
+      SafeDespawnGlow(glowData.GlowHandle);
+      SafeDespawnGlow(glowData.RelayHandle);
     }
     else
     {
