@@ -4,7 +4,7 @@ namespace AdminESP;
 
 [PluginMetadata( 
     Id = "AdminESP",
-    Version = "1.0.1",
+    Version = "1.0.2",
     Name = "AdminESP",
     Author = "criskkky",
     Description = "See players through walls to supervise if someone is using cheats.",
