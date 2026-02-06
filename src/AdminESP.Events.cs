@@ -130,7 +130,7 @@ public partial class AdminESP : BasePlugin {
     });
 
     // Hook for death: 
-    // 1. Target: destroy glow to prevent it from following ragdoll
+    // 1. Target: destroy glow from PlayerPawn and recreate on ObserverPawn if viewers exist
     // 2. Viewer: if the viewer dies and has ESP (and mode is DeadOnly), they should start seeing the glows
     Core.GameEvent.HookPre<EventPlayerDeath>((@event) =>
     {
@@ -147,11 +147,40 @@ public partial class AdminESP : BasePlugin {
         Log($"[DEATH] Processing death for PlayerId={player.PlayerID} (SteamId={player.SteamID})", LogLevel.Info);
 
         // 1. Logic for Target (Glow Victim)
-        // Destroy glow to prevent it from following the ragdoll/corpse
+        // Destroy glow from PlayerPawn (to prevent following ragdoll)
         if (glowApplied.ContainsKey(player.PlayerID))
         {
-          Log($"[DEATH] Destroying glow for PlayerId={player.PlayerID} (SteamId={player.SteamID})", LogLevel.Info);
+          Log($"[DEATH] Destroying PlayerPawn glow for PlayerId={player.PlayerID} (SteamId={player.SteamID})", LogLevel.Info);
           DestroyGlow(player.PlayerID, "EventPlayerDeath");
+          
+          // Recreate glow on ObserverPawn if there are viewers with ESP enabled
+          if (HasActiveViewers(player.PlayerID))
+          {
+            var capturedPlayer = player;
+            Core.Scheduler.NextTick(() =>
+            {
+              try
+              {
+                // Re-validate player is still valid
+                var freshPlayer = Core.PlayerManager.GetAllPlayers()
+                                      .FirstOrDefault(p => p.PlayerID == capturedPlayer?.PlayerID);
+                
+                if (HasValidPawn(freshPlayer) && freshPlayer != null)
+                {
+                  Log($"[DEATH] Recreating glow on ObserverPawn for PlayerId={freshPlayer.PlayerID}", LogLevel.Info);
+                  SetGlow(freshPlayer); // Will use ObserverPawn via GetPawnForGlow
+                }
+                else
+                {
+                  Log($"[DEATH] No valid pawn for ObserverPawn glow recreation for PlayerId={capturedPlayer?.PlayerID}", LogLevel.Warning);
+                }
+              }
+              catch (Exception ex)
+              {
+                Log($"Error recreating ObserverPawn glow after death: {ex.Message}", LogLevel.Error);
+              }
+            });
+          }
         }
 
         // 2. Logic for Viewer (ESP User)

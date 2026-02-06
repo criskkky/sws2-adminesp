@@ -39,19 +39,54 @@ public partial class AdminESP : BasePlugin
   // Public Methods
   // ============================================================================
 
+  // Gets the pawn entity to apply glow to (PlayerPawn for alive, ObserverPawn for spectators)
+  private CBaseEntity? GetPawnForGlow(IPlayer player)
+  {
+    // Priority 1: PlayerPawn (alive player)
+    if (player.PlayerPawn != null && player.PlayerPawn.IsValid)
+      return player.PlayerPawn;
+    
+    // Priority 2: ObserverPawn (spectator/dead player)
+    var observerHandle = player.Controller.ObserverPawn;
+    if (observerHandle.IsValid)
+      return observerHandle.Value;
+    
+    return null;
+  }
+
   // Applies glow effect to a target player with team-based color
-  // Team 2 (T) = Red (255,0,0), Team 3 (CT) = Blue (0,0,255)
+  // Team 1 (SPEC) = Yellow (255,255,0), Team 2 (T) = Red (255,0,0), Team 3 (CT) = Blue (0,0,255)
   public void SetGlow(IPlayer target)
   {
-    if (target.PlayerPawn == null || !target.PlayerPawn.IsValid) return;
-    if (glowApplied.ContainsKey(target.PlayerID)) return; // Already applied (ContainsKey is safe for existence check)
+    var pawn = GetPawnForGlow(target);
+    if (pawn == null)
+    {
+      Log($"No valid pawn (PlayerPawn or ObserverPawn) for PlayerId={target.PlayerID}", LogLevel.Debug);
+      return;
+    }
+    
+    if (glowApplied.ContainsKey(target.PlayerID)) return; // Already applied
 
-    // Set color based on team: T=Red, CT=Blue
-    int r = target.Controller.TeamNum == 2 ? 255 : 0;
-    int g = 0;
-    int b = target.Controller.TeamNum == 2 ? 0 : 255;
+    // Set color based on team: SPEC=Yellow, T=Red, CT=Blue
+    int r, g, b;
+    switch (target.Controller.TeamNum)
+    {
+      case 1: // SPEC
+        r = 255; g = 255; b = 0;
+        break;
+      case 2: // T
+        r = 255; g = 0; b = 0;
+        break;
+      case 3: // CT
+        r = 0; g = 0; b = 255;
+        break;
+      default: // Fallback to white
+        r = 255; g = 255; b = 255;
+        break;
+    }
     int a = 255;
-    SetGlow(target.PlayerPawn, r, g, b, a, target.PlayerID);
+    
+    SetGlow(pawn, r, g, b, a, target.PlayerID);
   }
 
   // ============================================================================
@@ -84,10 +119,17 @@ public partial class AdminESP : BasePlugin
     return false;
   }
 
-  // Validates if a player has a valid PlayerPawn
+  // Validates if a player has a valid pawn (PlayerPawn or ObserverPawn)
   private bool HasValidPawn(IPlayer? player)
   {
-    return player?.PlayerPawn != null && player.PlayerPawn.IsValid;
+    if (player == null) return false;
+    
+    // Accept PlayerPawn (alive) OR ObserverPawn (spectator)
+    if (player.PlayerPawn != null && player.PlayerPawn.IsValid)
+      return true;
+    
+    var observerHandle = player.Controller.ObserverPawn;
+    return observerHandle.IsValid;
   }
 
   // Checks if there are any viewers with ESP enabled, excluding a specific player
@@ -141,9 +183,25 @@ public partial class AdminESP : BasePlugin
   // This is used to detect model changes (e.g., skin changes) that require glow recreation
   private string GetPlayerModelName(IPlayer player)
   {
-    // Fallback models: Team 2 (T) = Phoenix, Team 3 (CT) = SAS
-    string fallback = (player.Controller.TeamNum == 2) ? "characters/models/tm_phoenix/tm_phoenix.vmdl" : "characters/models/ctm_sas/ctm_sas.vmdl";
+    // Fallback models based on team
+    string fallback;
+    switch (player.Controller.TeamNum)
+    {
+      case 1: // SPEC - use a generic model or empty
+        fallback = "models/player/tm_phoenix.vmdl"; // Fallback generic
+        break;
+      case 2: // T
+        fallback = "characters/models/tm_phoenix/tm_phoenix.vmdl";
+        break;
+      case 3: // CT
+        fallback = "characters/models/ctm_sas/ctm_sas.vmdl";
+        break;
+      default:
+        fallback = "models/player/tm_phoenix.vmdl";
+        break;
+    }
 
+    // Try PlayerPawn first
     var pawn = player.PlayerPawn;
     var modelNode = pawn?.CBodyComponent?.SceneNode;
     if (modelNode != null)
@@ -155,6 +213,24 @@ public partial class AdminESP : BasePlugin
         return mName;
       }
     }
+    
+    // Try ObserverPawn if PlayerPawn didn't work
+    var observerHandle = player.Controller.ObserverPawn;
+    if (observerHandle.IsValid)
+    {
+      var observer = observerHandle.Value;
+      var obsModelNode = observer?.CBodyComponent?.SceneNode;
+      if (obsModelNode != null)
+      {
+        var skeleton = obsModelNode.GetSkeletonInstance();
+        var mName = skeleton?.ModelState?.ModelName;
+        if (!string.IsNullOrEmpty(mName))
+        {
+          return mName;
+        }
+      }
+    }
+    
     return fallback;
   }
 
