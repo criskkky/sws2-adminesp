@@ -38,7 +38,8 @@ public partial class AdminESP : BasePlugin {
   // Team 2 (T) = Red (255,0,0), Team 3 (CT) = Blue (0,0,255)
   public void SetGlow(IPlayer target)
   {
-    if (target.Pawn == null) return;
+    if (target.Controller == null) return;
+    if (target.Pawn == null || !target.Pawn.IsValid) return;
     if (glowApplied.ContainsKey(target.PlayerID)) return; // Already applied (ContainsKey is safe for existence check)
     
     // Set color based on team: T=Red, CT=Blue
@@ -73,6 +74,11 @@ public partial class AdminESP : BasePlugin {
   // - No permission: returns false
   private bool CanViewerSeeGlow(IPlayer viewer)
   {
+    if (viewer.Controller == null)
+    {
+      return false;
+    }
+
     var (hasFull, hasLimited) = CheckPermissions(viewer.SteamID);
     if (hasFull) return true;
     if (hasLimited) return viewer.Controller.TeamNum == 1 || !viewer.Controller.PawnIsAlive;

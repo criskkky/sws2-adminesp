@@ -36,7 +36,7 @@ public partial class AdminESP : BasePlugin {
     {
       try
       {
-        var player = Core.PlayerManager.GetAllPlayers().FirstOrDefault(p => p.PlayerID == @event.UserId);
+        var player = @event.UserIdPlayer ?? Core.PlayerManager.GetPlayer(@event.UserId);
         if (player == null)
         {
           Log($"Player not found for UserId {@event.UserId}", LogLevel.Warning);
@@ -75,19 +75,21 @@ public partial class AdminESP : BasePlugin {
           Log($"[SPAWN] Creating glow for PlayerId={player.PlayerID} (SteamId={player.SteamID}): {allPlayers.Count(v => v != player && espEnabled.TryGetValue(v.PlayerID, out bool e) && e)} viewers with ESP", LogLevel.Info);
           
           // Use NextTick to ensure player model is fully loaded before applying glow
-          var capturedPlayer = player; // Capture for closure
+          int playerId = player.PlayerID;
+          ulong steamId = player.SteamID;
           Core.Scheduler.NextTick(() =>
           {
             try
             {
-              // Re-validate player and pawn are still valid
-              if (capturedPlayer != null && capturedPlayer.PlayerPawn != null && capturedPlayer.PlayerPawn.IsValid)
+              // Re-fetch by PlayerID to avoid using stale references inside deferred callbacks.
+              var nextTickPlayer = Core.PlayerManager.GetPlayer(playerId);
+              if (nextTickPlayer != null && nextTickPlayer.PlayerPawn != null && nextTickPlayer.PlayerPawn.IsValid)
               {
-                SetGlow(capturedPlayer);
+                SetGlow(nextTickPlayer);
               }
               else
               {
-                Log($"[SPAWN] Player or pawn became invalid before NextTick for PlayerId={capturedPlayer?.PlayerID} (SteamId={capturedPlayer?.SteamID})", LogLevel.Warning);
+                Log($"[SPAWN] Player or pawn became invalid before NextTick for PlayerId={playerId} (SteamId={steamId})", LogLevel.Warning);
               }
             }
             catch (Exception ex)
@@ -120,13 +122,9 @@ public partial class AdminESP : BasePlugin {
     {
       try
       {
-        // Use UserId (PlayerID) instead of SteamID to correctly identify bots
-        var player = Core.PlayerManager.GetAllPlayers().FirstOrDefault(p => p.PlayerID == @event.UserId);
-        if (player != null)
-        {
-          DestroyGlow(player.PlayerID, "EventPlayerDisconnect");
-          espEnabled.TryRemove(player.PlayerID, out _);
-        }
+        int playerId = @event.UserId;
+        DestroyGlow(playerId, "EventPlayerDisconnect");
+        espEnabled.TryRemove(playerId, out _);
       }
       catch (Exception ex)
       {
@@ -142,8 +140,7 @@ public partial class AdminESP : BasePlugin {
     {
       try
       {
-        // Use UserId (PlayerID) instead of SteamID to correctly identify bots
-        var player = Core.PlayerManager.GetAllPlayers().FirstOrDefault(p => p.PlayerID == @event.UserId);
+        var player = @event.UserIdPlayer ?? Core.PlayerManager.GetPlayer(@event.UserId);
         if (player == null)
         {
           Log($"[DEATH] Player not found for UserId {@event.UserId}", LogLevel.Warning);
@@ -206,8 +203,7 @@ public partial class AdminESP : BasePlugin {
     {
       try
       {
-        // Use UserId (PlayerID) instead of SteamID to correctly identify bots
-        var player = Core.PlayerManager.GetAllPlayers().FirstOrDefault(p => p.PlayerID == @event.UserId);
+        var player = @event.UserIdPlayer ?? Core.PlayerManager.GetPlayer(@event.UserId);
         if (player == null)
         {
           Log($"[TEAM_CHANGE] Player not found for UserId {@event.UserId}", LogLevel.Warning);
@@ -229,20 +225,21 @@ public partial class AdminESP : BasePlugin {
             if (allPlayers.Any(v => v != player && espEnabled.TryGetValue(v.PlayerID, out bool isEnabled) && isEnabled))
             {
               // Use NextTick to ensure player model is updated with new team before applying glow
-              var capturedPlayer = player; // Capture for closure
+              int playerId = player.PlayerID;
+              ulong steamId = player.SteamID;
               Core.Scheduler.NextTick(() =>
               {
                 try
                 {
-                  // Re-validate player and pawn are still valid
-                  if (capturedPlayer != null && capturedPlayer.PlayerPawn != null && capturedPlayer.PlayerPawn.IsValid)
+                  var nextTickPlayer = Core.PlayerManager.GetPlayer(playerId);
+                  if (nextTickPlayer != null && nextTickPlayer.PlayerPawn != null && nextTickPlayer.PlayerPawn.IsValid)
                   {
-                    SetGlow(capturedPlayer);
-                    Log($"Recreated glow for {capturedPlayer.SteamID} with new team color", LogLevel.Info);
+                    SetGlow(nextTickPlayer);
+                    Log($"Recreated glow for {nextTickPlayer.SteamID} with new team color", LogLevel.Info);
                   }
                   else
                   {
-                    Log($"[TEAM_CHANGE] Player or pawn became invalid before NextTick for PlayerId={capturedPlayer?.PlayerID} (SteamId={capturedPlayer?.SteamID})", LogLevel.Warning);
+                    Log($"[TEAM_CHANGE] Player or pawn became invalid before NextTick for PlayerId={playerId} (SteamId={steamId})", LogLevel.Warning);
                   }
                 }
                 catch (Exception ex)
@@ -275,7 +272,7 @@ public partial class AdminESP : BasePlugin {
     {
       try
       {
-        var bot = Core.PlayerManager.GetAllPlayers().FirstOrDefault(p => p.PlayerID == @event.BotID);
+        var bot = Core.PlayerManager.GetPlayer(@event.BotID);
         if (bot != null)
         {
           Log($"[BOT_TAKEOVER] Destroying glow for bot PlayerId={bot.PlayerID}", LogLevel.Info);
@@ -305,18 +302,20 @@ public partial class AdminESP : BasePlugin {
               Log($"Recreating glow for player {player.SteamID} after bot takeover (viewers with ESP: {allPlayers.Count(v => v != player && espEnabled.TryGetValue(v.PlayerID, out bool e) && e)})", LogLevel.Info);
               
               // Use NextTick to ensure everything is settled
-              var capturedPlayer = player;
+              int playerId = player.PlayerID;
+              ulong steamId = player.SteamID;
               Core.Scheduler.NextTick(() =>
               {
                 try
                 {
-                  if (capturedPlayer != null && capturedPlayer.PlayerPawn != null && capturedPlayer.PlayerPawn.IsValid)
+                  var nextTickPlayer = Core.PlayerManager.GetPlayer(playerId);
+                  if (nextTickPlayer != null && nextTickPlayer.PlayerPawn != null && nextTickPlayer.PlayerPawn.IsValid)
                   {
-                    SetGlow(capturedPlayer);
+                    SetGlow(nextTickPlayer);
                   }
                   else
                   {
-                    Log($"[BOT_TAKEOVER] Player or pawn became invalid after NextTick for PlayerId={capturedPlayer?.PlayerID} (SteamId={capturedPlayer?.SteamID})", LogLevel.Warning);
+                    Log($"[BOT_TAKEOVER] Player or pawn became invalid after NextTick for PlayerId={playerId} (SteamId={steamId})", LogLevel.Warning);
                   }
                 }
                 catch (Exception ex)
