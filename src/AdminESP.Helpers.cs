@@ -213,7 +213,7 @@ public partial class AdminESP : BasePlugin {
   // Method to toggle ESP for a user
   private void ToggleESP(ulong steamId)
   {
-    var viewer = Core.PlayerManager.GetAllPlayers().FirstOrDefault(p => p.SteamID == steamId);
+    var viewer = Core.PlayerManager.GetPlayerFromSteamId(steamId);
     if (viewer == null)
     {
       Log($"Viewer not found for SteamID {steamId}", LogLevel.Warning);
@@ -289,7 +289,7 @@ public partial class AdminESP : BasePlugin {
   // Used for: config refresh, player state changes (death/spawn/team change)
   private void UpdateViewerTransmits(ulong steamId)
   {
-    var viewer = Core.PlayerManager.GetAllPlayers().FirstOrDefault(p => p.SteamID == steamId);
+    var viewer = Core.PlayerManager.GetPlayerFromSteamId(steamId);
     if (viewer == null)
     {
       Log($"Viewer not found for SteamID {steamId}", LogLevel.Warning);
