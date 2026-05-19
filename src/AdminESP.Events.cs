@@ -21,6 +21,24 @@ public partial class AdminESP : BasePlugin {
             espEnabled.TryAdd(player.PlayerID, false); // Default to disabled
             Log($"Initialized ESP data for {player.SteamID} (PlayerID {player.PlayerID})", LogLevel.Info);
           }
+
+          HideAllGlowsFromViewer(player, "EventPlayerConnectFull");
+          int playerId = player.PlayerID;
+          Core.Scheduler.NextTick(() =>
+          {
+            try
+            {
+              var nextTickPlayer = Core.PlayerManager.GetPlayer(playerId);
+              if (nextTickPlayer != null)
+              {
+                HideAllGlowsFromViewer(nextTickPlayer, "EventPlayerConnectFull:NextTick");
+              }
+            }
+            catch (Exception ex)
+            {
+              Log($"Error hiding glows after EventPlayerConnectFull: {ex.Message}", LogLevel.Error);
+            }
+          });
         }
       }
       catch (Exception ex)
@@ -105,10 +123,7 @@ public partial class AdminESP : BasePlugin {
 
         // 2. VIEWER Logic: Update visibility if this player has ESP enabled
         // If they respawned and mode is DeadOnly, they should lose vision of glows
-        if (espEnabled.TryGetValue(player.PlayerID, out bool viewerEnabled) && viewerEnabled)
-        {
-          UpdateViewerTransmits(player.SteamID);
-        }
+        UpdateViewerTransmits(player.SteamID);
       }
       catch (Exception ex)
       {
@@ -122,7 +137,7 @@ public partial class AdminESP : BasePlugin {
     {
       try
       {
-        int playerId = @event.UserId;
+        int playerId = @event.PlayerID;
         DestroyGlow(playerId, "EventPlayerDisconnect");
         espEnabled.TryRemove(playerId, out _);
       }
@@ -253,11 +268,9 @@ public partial class AdminESP : BasePlugin {
 
         // 2. If it's VIEWER (has ESP enabled), we need to refresh their visibility
         // If the mode is DeadOnly (1) or SpecOnly (2), changing team may gain/lose vision.
-        if (espEnabled.TryGetValue(player.PlayerID, out bool viewerEnabled) && viewerEnabled)
-        {
-            // Update transmits based on new team/state
-            UpdateViewerTransmits(player.SteamID);
-        }
+        // Update transmits based on new team/state. This also force-hides glows
+        // for players without ESP enabled, including freshly reconnected clients.
+        UpdateViewerTransmits(player.SteamID);
       }
       catch (Exception ex)
       {

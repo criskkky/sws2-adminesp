@@ -210,6 +210,20 @@ public partial class AdminESP : BasePlugin {
     }
   }
 
+  // Explicitly hides every existing glow from a viewer. This is important for
+  // newly connected clients because glows may have been created before they joined.
+  private void HideAllGlowsFromViewer(IPlayer viewer, string reason)
+  {
+    foreach (var kvp in glowApplied)
+    {
+      var (applied, glow, relay, modelName) = kvp.Value;
+      if (glow != null && glow.IsValid) glow.SetTransmitState(false, viewer.PlayerID);
+      if (relay != null && relay.IsValid) relay.SetTransmitState(false, viewer.PlayerID);
+    }
+
+    Log($"Hidden all existing glows from PlayerId={viewer.PlayerID} (SteamID={viewer.SteamID}), Reason={reason}", LogLevel.Debug);
+  }
+
   // Method to toggle ESP for a user
   private void ToggleESP(ulong steamId)
   {
